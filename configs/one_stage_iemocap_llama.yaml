@@ -117,12 +117,17 @@ train:
   amp_dtype: bfloat16      # none | float16 | bfloat16
   early_stopping_patience: 20
   save_best_metric: weighted_f1     # measured on the FUSION head, val split
-  # IEMOCAP's val split is session 1 — 28 dialogues — and for this variant val
-  # runs ~9 pp below test with an ordering that does not track it. Selecting on
-  # a single-epoch peak is therefore noisy at roughly the size of the effects
-  # being compared; averaging the last N epochs selects a stable region instead.
-  # 1 disables smoothing (what the RoBERTa repo did).
-  save_best_smooth: 3
+  # TESTED AND REJECTED. The idea was that val (session 1, 28 dialogues, ~9 pp
+  # below test) is too noisy to select a single-epoch peak on, so averaging the
+  # last N epochs should pick a stabler point. It does the opposite: 5 seeds at
+  # save_best_smooth=3 gave 0.8286 +/- 0.0194 against 0.8420 +/- 0.0114 without.
+  # The val curve is not a noisy plateau, it is a genuine early peak followed by
+  # overfitting (train fusion loss reaches 0.07 by epoch 15), so a moving
+  # average selects roughly two epochs down the far side every time.
+  # Keep at 1. The val/test gap is therefore not selection noise — more likely a
+  # real session 1 vs session 5 difficulty difference, which no selection rule
+  # can fix.
+  save_best_smooth: 1
   num_workers: 2
 
 logging:

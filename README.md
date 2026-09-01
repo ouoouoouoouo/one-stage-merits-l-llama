@@ -248,9 +248,30 @@ Carried over into this repo's defaults, so it does not have to be rediscovered:
 - [x] Smoke test on the cluster — 18/18, peak 15.57 GiB at B=1 K=46 L=43
 - [x] 5-seed sweep, `lambda_aux = 1.0` — 0.8288 ± 0.0074
 - [x] 5-seed sweep, `lambda_aux = 0.0` — **0.8420 ± 0.0114**, the better arm
-- [ ] Rescue the audio branch (`lambda_audio_stage1`, `audio_lr`) on the
-      `nomsp` arm — audio Stage I at 0.4580 is the clearest remaining gap
+- [x] Smoothed checkpoint selection — **tested and rejected**, 0.8286 ± 0.0194
+      against 0.8420 ± 0.0114. Default back to 1.
+- [ ] `lambda_aux` sensitivity sweep: {0, 0.1, 0.3, 1.0} × {cosine, phase}
 - [ ] Ablations over the remaining lambda terms
+
+### Two hypotheses this repo has already falsified
+
+**"The audio branch is the gap."** Audio Stage I is worst in the arm with the
+*best* fusion (`nomsp` 0.4580 / 0.8420 against `msp` 0.5388 / 0.8288), and
+`nomsp` is worse than `msp` on three of four auxiliary heads while winning on
+fusion. In this regime the auxiliary head metrics do not predict fusion
+performance — they measure how linearly separable a representation is at that
+depth, which is not what co-attention needs. Tuning `lambda_audio_stage1` or
+`audio_lr` to lift audio Stage I would likely cost fusion points.
+
+**"Val selection is too noisy, so smooth it."** Rejected above. The val curve is
+a real early peak, not a noisy plateau, so a moving average systematically
+selects down the far side. The ~9 pp val/test gap is more plausibly a genuine
+session 1 vs session 5 difficulty difference.
+
+The modality-balance ratio does drift upward during training (~2.6 → ~3.8 by the
+end, identically in both arms), so co-attention really does shift toward text —
+but that drift is not what separates the arms, and part of the level is
+mechanical (`proj_text` is 2048→256 against `proj_audio`'s 256→256).
 
 ## Reference
 

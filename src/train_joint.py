@@ -317,11 +317,10 @@ def train(cfg: AttrDict) -> None:
     best_ckpt.parent.mkdir(parents=True, exist_ok=True)
     global_step = 0
     balance = float("nan")
-    # Selection smoothing. IEMOCAP's val split is session 1 — 28 dialogues — and
-    # for the Llama variant val sits ~9 pp below test with an ordering that does
-    # not track it, so a single-epoch peak is a noisy thing to select on.
-    # Averaging the last `smooth` epochs picks a stable region instead of a
-    # spike. 1 disables it (and reproduces the RoBERTa repo's behaviour).
+    # Selection smoothing — measured to HURT, kept only so the negative result
+    # stays reproducible. See the config comment: averaging the last N val
+    # epochs lands about two epochs past a genuine early peak, costing 1.3 pp
+    # and doubling the variance. Leave at 1.
     smooth = max(1, int(cfg.train.get("save_best_smooth", 1)))
     val_history: List[float] = []
 
