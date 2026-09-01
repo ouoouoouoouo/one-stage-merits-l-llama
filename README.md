@@ -126,7 +126,52 @@ two arms rather than deciding in advance.
 | `one-stage-merits-l` (RoBERTa) | 1 | 0.8368 | 0.8281 ± 0.0064 |
 | **`merits-l-llama` staged** ⭐ | 6 | **0.8746** | **0.8567 ± 0.0139** |
 | `merits-l-llama` staged + MSP pre-train | 6 | 0.8640 | 0.8550 ± 0.0072 |
-| **One-stage Llama (this repo)** | **1** | — | — |
+| One-stage Llama, `lambda_aux = 1.0` | 1 | 0.8362 | 0.8288 ± 0.0074 |
+| **One-stage Llama, `lambda_aux = 0`** | **1** | **0.8588** | **0.8420 ± 0.0114** |
+
+## Result: the LLM-supervised term helps RoBERTa and hurts Llama
+
+| Text encoder | with `L_MSP` | without | Δ | |
+|---|---:|---:|---:|---|
+| RoBERTa-large (355 M) | **0.8281** | 0.8172 | **+1.09** | p ≈ 0.12 |
+| Llama-3.1-8B | 0.8288 | **0.8420** | **−1.32** | p ≈ 0.06 |
+
+The sign flips. Four of five `nomsp` seeds beat every `msp` seed (`msp`
+0.8209–0.8362, `nomsp` 0.8291–0.8588), and this is the second independent
+experiment pointing the same way: the staged pipeline in `merits-l-llama` also
+came out slightly worse with MSP pre-training (0.8550 vs 0.8567).
+
+The mechanism is consistent with what the RoBERTa ablations showed. `L_MSP`
+acts as a regulariser, not as a source of emotion knowledge — with a 355 M
+encoder fine-tuned on 3,205 utterances that anchor is worth 1.1 pp, but
+GPT-3.5's three-way polarity on noisy ASR transcripts is a *coarser* teacher
+than an 8 B model's own pretrained knowledge, so for Llama it pulls the LoRA
+adapters toward a weaker task. **The paper's title contribution does not
+survive scaling the text encoder.**
+
+### Against the staged pipeline
+
+One-stage Llama (`nomsp`) reaches 0.8420 ± 0.0114 against the staged
+0.8567 ± 0.0139 — −1.47 pp, t ≈ 1.83, p ≈ 0.10. Not significant, but unlike
+the RoBERTa version (−0.24 pp, p ≈ 0.73) the direction is consistent.
+
+Two caveats before reading that as "one-stage costs more with a stronger
+encoder". First, the RoBERTa configuration went through four rounds of tuning
+and this one is a straight transplant of it — the tuning effort is not
+comparable. Second, the gap has an obvious candidate:
+
+| audio Stage I wF1 | |
+|---|---:|
+| staged CARE downstream | 0.5787 |
+| one-stage RoBERTa | 0.5547 |
+| one-stage Llama, `msp` | 0.5388 |
+| one-stage Llama, `nomsp` | **0.4580 ± 0.0577** |
+
+The audio branch is the worst it has been in any configuration, with the
+largest variance — the modality-imbalance failure the smoke test was built to
+watch for. Note that `msp` has the *better* audio branch: slowing the text side
+down gave audio room to catch up, yet it still loses on fusion, so the
+text-side cost outweighs the audio-side gain.
 
 ## Setup (cluster)
 
@@ -200,9 +245,11 @@ Carried over into this repo's defaults, so it does not have to be rediscovered:
 
 ## Status
 
-- [ ] Smoke test on the cluster (shapes, gradient reachability, peak memory)
-- [ ] 5-seed sweep, `lambda_aux = 1.0`
-- [ ] 5-seed sweep, `lambda_aux = 0.0`
+- [x] Smoke test on the cluster — 18/18, peak 15.57 GiB at B=1 K=46 L=43
+- [x] 5-seed sweep, `lambda_aux = 1.0` — 0.8288 ± 0.0074
+- [x] 5-seed sweep, `lambda_aux = 0.0` — **0.8420 ± 0.0114**, the better arm
+- [ ] Rescue the audio branch (`lambda_audio_stage1`, `audio_lr`) on the
+      `nomsp` arm — audio Stage I at 0.4580 is the clearest remaining gap
 - [ ] Ablations over the remaining lambda terms
 
 ## Reference
