@@ -78,18 +78,31 @@ def trainable_state_dict(model) -> Dict[str, torch.Tensor]:
             if n in trainable_names}
 
 
-def aux_scale(step: int, total_steps: int, schedule: str, final_scale: float) -> float:
+def aux_scale(step: int, total_steps: int, schedule: str, final_scale: float,
+              phase_frac: float = 0.3) -> float:
     """Decay factor on lambda_aux.
 
     The paper pre-trains on MSP-PODCAST for 10 epochs and then never looks at it
     again. In a one-stage run the equivalent is a weight that starts at full
-    strength and fades: without it, a 3-class sentiment task on 149K utterances
-    keeps competing with a 4-class emotion task on 4.3K all the way to the end.
+    strength and fades: without it, a 3-class sentiment task on 118K utterances
+    keeps competing with a 4-class emotion task on 3,205 all the way to the end.
+
+    Schedules:
+      none/constant — full weight throughout
+      cosine        — slow at first, fast in the middle, slow at the end
+      linear        — uniform retreat
+      phase         — full weight for the first `phase_frac` of the run, then
+                      exactly zero. The literal translation of "pre-train, then
+                      stop", and the one to reach for when the auxiliary task
+                      helps early and interferes late — which is what the Llama
+                      arms look like (msp 0.8288 vs nomsp 0.8420).
     """
     schedule = str(schedule).lower()
     if schedule in ("none", "constant"):
         return 1.0
     p = min(max(step / max(1, total_steps), 0.0), 1.0)
+    if schedule == "phase":
+        return 1.0 if p < phase_frac else 0.0
     if schedule == "linear":
         decay = 1.0 - p
     elif schedule == "cosine":
@@ -292,6 +305,8 @@ def train(cfg: AttrDict) -> None:
                 f"audio={cfg.train.get('audio_lr', cfg.train.head_lr)}  "
                 f"head={cfg.train.head_lr}  warmup={warmup_steps}/{total_steps}")
     runlog.info(f"AMP          : {cfg.train.get('amp_dtype', 'none')}   seed={cfg.seed}")
+    runlog.info(f"Selection    : val fusion {cfg.train.save_best_metric}, "
+                f"smoothed over {cfg.train.get('save_best_smooth', 1)} epoch(s)")
     runlog.info("=" * 74)
 
     best_score, best_epoch, bad_epochs = -math.inf, -1, 0
@@ -302,6 +317,13 @@ def train(cfg: AttrDict) -> None:
     best_ckpt.parent.mkdir(parents=True, exist_ok=True)
     global_step = 0
     balance = float("nan")
+    # Selection smoothing. IEMOCAP's val split is session 1 — 28 dialogues — and
+    # for the Llama variant val sits ~9 pp below test with an ordering that does
+    # not track it, so a single-epoch peak is a noisy thing to select on.
+    # Averaging the last `smooth` epochs picks a stable region instead of a
+    # spike. 1 disables it (and reproduces the RoBERTa repo's behaviour).
+    smooth = max(1, int(cfg.train.get("save_best_smooth", 1)))
+    val_history: List[float] = []
 
     for epoch in range(int(cfg.train.epochs)):
         model.train()
@@ -337,7 +359,8 @@ def train(cfg: AttrDict) -> None:
                         aux_batch["labels"].to(device, non_blocking=True),
                     )
                     scale = aux_scale(global_step, total_steps,
-                                      cfg.loss.aux_schedule, float(cfg.loss.aux_final_scale))
+                                      cfg.loss.aux_schedule, float(cfg.loss.aux_final_scale),
+                                      float(cfg.loss.get("aux_phase_frac", 0.3)))
                     total = total + float(cfg.loss.lambda_aux) * scale * aux_out["loss"]
                     aux_value = float(aux_out["loss"].item())
                     running["aux"].append(aux_value)
@@ -368,7 +391,8 @@ def train(cfg: AttrDict) -> None:
                     scalars["loss_aux"] = float(np.mean(running["aux"][-log_every:]))
                 scalars["lambda_aux_scale"] = aux_scale(
                     global_step, total_steps, cfg.loss.aux_schedule,
-                    float(cfg.loss.aux_final_scale)) if use_aux else 0.0
+                    float(cfg.loss.aux_final_scale),
+                    float(cfg.loss.get("aux_phase_frac", 0.3))) if use_aux else 0.0
                 for gname, lr in zip(group_names, scheduler.get_last_lr()):
                     if not gname.endswith("_no_decay"):
                         scalars[f"lr_{gname}"] = lr
@@ -411,11 +435,14 @@ def train(cfg: AttrDict) -> None:
             f"A1={val['audio_stage1']['weighted_f1']:.4f}"
         )
 
-        score = val["fusion"][str(cfg.train.save_best_metric)]
+        raw_score = val["fusion"][str(cfg.train.save_best_metric)]
+        val_history.append(raw_score)
+        score = float(np.mean(val_history[-smooth:]))
         # Running-best mirror: on a WandB sweep panel the raw val curve is noisy
         # enough that "did this run beat the staged baseline" is hard to read off.
         runlog.log_scalars(
             {f"best_{cfg.train.save_best_metric}": max(score, best_score),
+             "smoothed": score,
              "best_epoch": best_epoch if score <= best_score else epoch + 1},
             step=global_step, prefix="val/fusion",
         )
@@ -439,7 +466,9 @@ def train(cfg: AttrDict) -> None:
                 "seed": int(cfg.seed),
                 "score": score,
             }, best_ckpt)
-            runlog.info(f"  -> new best (val fusion {cfg.train.save_best_metric}={score:.4f}), saved.")
+            runlog.info(f"  -> new best (val fusion {cfg.train.save_best_metric}="
+                        f"{score:.4f}" + (f", raw {raw_score:.4f}" if smooth > 1 else "")
+                        + "), saved.")
         else:
             bad_epochs += 1
             if bad_epochs >= patience:

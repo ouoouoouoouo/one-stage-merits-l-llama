@@ -81,9 +81,17 @@ loss:
   lambda_audio_stage2: 0.5
   lambda_text_stage1: 0.5
   lambda_audio_stage1: 1.0    # slowest block in the model; see README
-  lambda_aux: 1.0             # set 0.0 for the no-MSP arm
-  aux_schedule: cosine        # none | cosine | linear
-  aux_final_scale: 0.05
+  # lambda_aux = 0 is one point on this sweep, not a separate experiment — that
+  # framing keeps the comparison fair once the MSP arm gets tuned.
+  lambda_aux: 1.0
+  # none | cosine | linear | phase
+  #   phase = full weight for the first `aux_phase_frac` of the run, then
+  #   exactly zero. The literal translation of the paper's "pre-train for 10
+  #   epochs, then stop", and the schedule to use when the auxiliary task helps
+  #   early and interferes late.
+  aux_schedule: cosine
+  aux_final_scale: 0.05       # cosine / linear only
+  aux_phase_frac: 0.3         # phase only
 
 train:
   # Same schedule as the RoBERTa version so the two are directly comparable:
@@ -109,6 +117,12 @@ train:
   amp_dtype: bfloat16      # none | float16 | bfloat16
   early_stopping_patience: 20
   save_best_metric: weighted_f1     # measured on the FUSION head, val split
+  # IEMOCAP's val split is session 1 — 28 dialogues — and for this variant val
+  # runs ~9 pp below test with an ordering that does not track it. Selecting on
+  # a single-epoch peak is therefore noisy at roughly the size of the effects
+  # being compared; averaging the last N epochs selects a stable region instead.
+  # 1 disables smoothing (what the RoBERTa repo did).
+  save_best_smooth: 3
   num_workers: 2
 
 logging:
