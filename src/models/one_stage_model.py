@@ -76,6 +76,10 @@ class LlamaTextStage1(nn.Module):
         dtype = _DTYPES[str(base_dtype)]
         self.base = AutoModel.from_pretrained(model_id, torch_dtype=dtype)
         hidden_size = self.base.config.hidden_size          # 4096 for Llama-3.1-8B
+        # We never generate, and a KV cache is incompatible with gradient
+        # checkpointing — transformers would disable it anyway, once per forward,
+        # with a warning.
+        self.base.config.use_cache = False
 
         if gradient_checkpointing:
             # A dialogue batch is B x K sequences (K up to 110 for IEMOCAP), so
@@ -465,6 +469,23 @@ class OneStageMERITSLlama(nn.Module):
         return self.text_stage1(input_ids, attention_mask, labels, head="aux")
 
     # -- introspection ------------------------------------------------------
+    @torch.no_grad()
+    def modality_balance(self) -> float:
+        """||grad(proj_text)|| / ||grad(proj_audio)|| at the fusion input.
+
+        Read as a trend, not a level: proj_text is 2048->256 and proj_audio is
+        256->256, so the ratio starts above 1 for purely mechanical reasons
+        (~2.6 at initialisation with Llama). What matters is whether it climbs
+        during training, which is what co-attention abandoning the audio branch
+        looks like from the inside. Call it while gradients are still populated,
+        i.e. after clipping and before `optimizer.zero_grad()`.
+        """
+        def _n(module) -> float:
+            return sum(float(p.grad.detach().float().pow(2).sum())
+                       for p in module.parameters() if p.grad is not None) ** 0.5
+        a = _n(self.fusion.proj_audio)
+        return _n(self.fusion.proj_text) / a if a > 0 else float("nan")
+
     def param_groups(self, encoder_lr: float, head_lr: float, weight_decay: float,
                      audio_lr: Optional[float] = None):
         """Three learning rates, because the branches have opposite needs.

@@ -301,6 +301,7 @@ def train(cfg: AttrDict) -> None:
     best_ckpt = out_dir / "best" / "one_stage.pt"
     best_ckpt.parent.mkdir(parents=True, exist_ok=True)
     global_step = 0
+    balance = float("nan")
 
     for epoch in range(int(cfg.train.epochs)):
         model.train()
@@ -350,6 +351,9 @@ def train(cfg: AttrDict) -> None:
 
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(trainable, float(cfg.train.grad_clip))
+            # Sampled while the gradients still exist, only on steps that log.
+            if (global_step + 1) % log_every == 0:
+                balance = model.modality_balance()
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()
@@ -368,6 +372,9 @@ def train(cfg: AttrDict) -> None:
                 for gname, lr in zip(group_names, scheduler.get_last_lr()):
                     if not gname.endswith("_no_decay"):
                         scalars[f"lr_{gname}"] = lr
+                # An 8B text branch can make co-attention give up on audio; this
+                # ratio climbing over training is what that looks like early.
+                scalars["modality_balance_text_over_audio"] = balance
                 runlog.log_scalars(scalars, step=global_step, prefix="train")
                 pbar.set_postfix(total=f"{scalars['loss_total']:.3f}",
                                  fus=f"{scalars['loss_fusion']:.3f}")
