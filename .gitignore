@@ -1,0 +1,22 @@
+# Data / caches / checkpoints — never committed, all regenerable on the cluster.
+# Anchored to the repo root: an unanchored `data/` would also swallow src/data/.
+/data
+/outputs
+wandb/
+*.pt
+*.pth
+*.ckpt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Editors / OS / agent-local settings
+.vscode/
+.idea/
+.claude/settings.local.json
+.DS_Store
+Thumbs.db

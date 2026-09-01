@@ -1,0 +1,117 @@
+# One-stage MERITS-L (Llama) — IEMOCAP 4-way.
+#
+# Collapses the six sequential trainings of merits-l-llama into a single run
+# driven by a weighted sum of six cross-entropies (deep supervision).
+#
+# Reference numbers on this split (weighted F1, session 5 test):
+#   merits-l-llama, staged, no MSP pretrain   0.8567 +/- 0.0139, best 0.8746
+#   merits-l-llama, staged, + MSP pretrain    0.8550 +/- 0.0072, best 0.8640
+#   one-stage RoBERTa version (sibling repo)  0.8281 +/- 0.0064
+#
+# Paths are relative to the repo root. On the cluster:
+#   ln -s /home/ouo/merits-l-text/data data
+
+run_name: one_stage_iemocap_llama
+seed: 42
+deterministic: false
+output_dir: outputs/one_stage_iemocap_llama
+num_labels: 4
+label_names: [angry, happy, sad, neutral]
+
+dataset:
+  manifest_dir: data/manifests/iemocap
+  # {"features": {utt_id: (13,1536)}, "pooled": {utt_id: (768,)}} — frozen CARE.
+  care_cache_path: data/cache/iemocap_care_downstream.pt
+  max_length: 128          # merits-l-llama Stage I used 128
+
+aux:                       # MSP-PODCAST, the LLM-supervised term
+  enabled: true
+  manifest_path: data/manifests/msp_podcast/pseudo_labels.csv
+  label_map: {negative: 0, neutral: 1, positive: 2}
+  label_names: [negative, neutral, positive]
+  val_fraction: 0.20
+  split_seed: 42           # fixed independently of `seed`
+  batch_size: 16           # halved vs the RoBERTa version — these are extra
+                           # sequences through an 8B model, not a 355M one
+  eval_batch_size: 32
+  every: 2                 # pull an MSP batch every N micro-steps
+  max_eval_batches: 20
+
+model:
+  text:
+    model_id: meta-llama/Meta-Llama-3.1-8B
+    num_labels_aux: 3
+    use_lora: true
+    lora_r: 16             # merits-l-llama Stage I settings
+    lora_alpha: 32
+    lora_dropout: 0.1
+    target_modules: [q_proj, v_proj]
+    pool: mean             # decoder-only: no CLS token. 'last' also available.
+    dropout: 0.1
+    # merits-l-llama used fp16 for the LoRA runs. bf16 here because six summed
+    # losses through fp16 adapters is where silent NaNs live; the adapters
+    # themselves are cast to fp32 after wrapping.
+    base_dtype: bfloat16
+    gradient_checkpointing: true
+  audio:                    # CARE's official downstream head (frozen CARE input)
+    num_layers: 13          # 25 for a CARE-large cache
+    layer_dim: 1536         # 2048 for a CARE-large cache
+    pooled_dim: 768         # 1024 for a CARE-large cache
+    proj_dim: 768
+    hidden_dim: 256         # S1 — audio Stage II input
+    dropout: 0.2
+  text_stage2:
+    gru_hidden: 1024        # T2 = 2048  (merits-l-llama scaled 512 -> 1024 for
+    gru_layers: 2           #             the 4x wider Llama features)
+    num_heads: 8
+    dropout: 0.5
+  audio_stage2:
+    gru_hidden: 128         # S2 = 256
+    gru_layers: 2
+    num_heads: 8
+    dropout: 0.5
+  fusion:
+    hidden_dim: 256
+    num_heads: 8
+    dropout: 0.5
+
+loss:
+  lambda_fusion: 1.0
+  lambda_text_stage2: 0.5
+  lambda_audio_stage2: 0.5
+  lambda_text_stage1: 0.5
+  lambda_audio_stage1: 1.0    # slowest block in the model; see README
+  lambda_aux: 1.0             # set 0.0 for the no-MSP arm
+  aux_schedule: cosine        # none | cosine | linear
+  aux_final_scale: 0.05
+
+train:
+  # Same schedule as the RoBERTa version so the two are directly comparable:
+  # effective 4 dialogues, 23 optimizer steps per epoch, 100 epochs, patience 20.
+  epochs: 100
+  batch_size: 1            # conversations per micro-step (up to 110 utterances)
+  eval_batch_size: 1
+  grad_accum_steps: 4      # effective 4 conversations
+  # Longest IEMOCAP conversation is 110 utterances; pushing that many sequences
+  # through Llama in one call OOMs even with checkpointing. Chunking splits the
+  # forward only — the graph and the gradients are unchanged.
+  text_chunk: 16
+  # LoRA adapters. merits-l-llama Stage I trained them at 5e-5.
+  encoder_lr: 5.0e-5
+  # CARE's own downstream recipe. Covers the CARE Stage I head ONLY — audio
+  # Stage II is a Bi-GRU and belongs with the 5e-5 head group; running it at
+  # 1e-4 made its test wF1 swing 0.345-0.790 across seeds in the RoBERTa repo.
+  audio_lr: 1.0e-4
+  head_lr: 5.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  grad_clip: 1.0
+  amp_dtype: bfloat16      # none | float16 | bfloat16
+  early_stopping_patience: 20
+  save_best_metric: weighted_f1     # measured on the FUSION head, val split
+  num_workers: 2
+
+logging:
+  use_wandb: true
+  wandb_project: one-stage-merits-l-llama
+  log_every: 10
