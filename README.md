@@ -224,7 +224,7 @@ frozen and a fresh 8-way linear layer is fitted at every depth of the pipeline.
 # 1. run MSP through the frozen model, caching T1 / S1 / T2 / S2 / h  (~1 h, ~2.2 GB)
 python -m scripts.extract_msp_representations \
     --checkpoint outputs/nomsp/seed_1/best/one_stage.pt \
-    --manifest   /home/ouo/AdaLTM/8class_DropTextNAN.csv \
+    --manifest   /home/ouo/AdaLTM-reproduction/8class_DropTextNAN.csv \
     --audio-dir  /home/ouo/dataset/MSP_Podcast/Audios \
     --care-ckpt  /home/ouo/care_training/ckpts_faithful/best.pth \
     --care-repo  /home/ouo/care_training/CARE/pretraining \

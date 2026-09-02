@@ -29,7 +29,7 @@ pre-training. The text branch is clean when probing a `lambda_aux = 0` model.
 Usage:
     python -m scripts.extract_msp_representations \
         --checkpoint outputs/nomsp/seed_1/best/one_stage.pt \
-        --manifest /home/ouo/AdaLTM/8class_DropTextNAN.csv \
+        --manifest /home/ouo/AdaLTM-reproduction/8class_DropTextNAN.csv \
         --audio-dir /home/ouo/dataset/MSP_Podcast/Audios \
         --care-ckpt /home/ouo/care_training/ckpts_faithful/best.pth \
         --care-repo /home/ouo/care_training/CARE/pretraining \
