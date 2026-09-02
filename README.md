@@ -250,8 +250,46 @@ Carried over into this repo's defaults, so it does not have to be rediscovered:
 - [x] 5-seed sweep, `lambda_aux = 0.0` — **0.8420 ± 0.0114**, the better arm
 - [x] Smoothed checkpoint selection — **tested and rejected**, 0.8286 ± 0.0194
       against 0.8420 ± 0.0114. Default back to 1.
-- [ ] `lambda_aux` sensitivity sweep: {0, 0.1, 0.3, 1.0} × {cosine, phase}
+- [x] `lambda_aux` sensitivity sweep, 6 arms × 5 seeds — see below
 - [ ] Ablations over the remaining lambda terms
+
+## The `lambda_aux` sweep
+
+| arm | `lambda_aux` | fusion wF1 | vs λ = 0 | |
+|---|---|---:|---:|---|
+| `nomsp` | **0** | **0.8420 ± 0.0114** | — | |
+| `lam01` | 0.1, cosine | 0.8272 ± 0.0137 | −1.48 | p ≈ 0.10 |
+| `lam03` | 0.3, cosine | 0.8380 ± 0.0090 | −0.40 | p ≈ 0.55 |
+| `msp` | 1.0, cosine | 0.8288 ± 0.0074 | −1.32 | p ≈ 0.06 |
+| `phase15` | 1.0, phase 15 % | **0.8394 ± 0.0076** | −0.26 | p ≈ 0.68 |
+| `phase03` | 1.0, phase 30 % | 0.8273 ± 0.0143 | −1.47 | p ≈ 0.10 |
+
+**Read the shape before the numbers: the curve is not monotone.** If the harm
+grew with the strength of the auxiliary term, `lam01` (λ = 0.1) would sit
+closest to λ = 0; it is the lowest of all six. `phase03` uses only slightly more
+MSP than `phase15` and lands 1.2 pp below it. There is no mechanism for that, so
+at five seeds most of the spread across these arms is noise — the whole sweep
+spans 1.48 pp against a per-arm standard error of 0.003–0.006.
+
+The one statement that survives: **no setting of `lambda_aux` beats 0.** The
+best case is parity, and `phase15` and `lam03` reach it (both statistically
+indistinguishable from λ = 0).
+
+For a reported system that keeps the paper's LLM-supervised objective,
+`phase15` is the defensible pick: parity with λ = 0, the lowest variance of any
+MSP-bearing arm, and a schedule that is the literal translation of "pre-train
+for 10 epochs, then stop" rather than a swept constant. Stated carefully:
+**retaining the LLM-supervised objective costs nothing measurable, provided it
+is applied as an early phase rather than as a term that runs the whole way.**
+Against the RoBERTa repo that completes a clean picture — the same objective
+wants to stay on throughout for a 355 M encoder (λ = 1.0, cosine) and to switch
+off after 15 % of training for an 8 B one.
+
+Reporting caveat: picking the maximum of six arms inflates it by roughly 1 pp at
+this standard error. Report the curve, phrase comparisons as "indistinguishable
+from λ = 0", and avoid point-to-point claims such as "λ = 0.1 beats λ = 1.0",
+which is exactly the part driven by noise. Firming up `phase15` vs `nomsp`
+would need 10+ seeds per arm.
 
 ### Two hypotheses this repo has already falsified
 
