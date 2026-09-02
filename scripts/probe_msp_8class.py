@@ -140,7 +140,9 @@ def fit_probe(X: Dict[str, torch.Tensor], y: Dict[str, np.ndarray], device, args
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--reps", required=True)
+    ap.add_argument("--reps", required=True, nargs="+",
+                    help="one or more caches; extraction can be split across GPUs "
+                         "by Split_Set and merged here")
     ap.add_argument("--probes", nargs="*", default=PROBES)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--hidden", type=int, default=0, help="0 = linear probe")
@@ -157,10 +159,23 @@ def main() -> int:
 
     set_seed(args.seed)
     device = torch.device(args.device)
-    payload = torch.load(args.reps, map_location="cpu", weights_only=False)
-    reps, names = payload["reps"], payload["label_names"]
-    print(f"{len(reps)} utterances from {payload['checkpoint']}  "
-          f"(grouped_by_show={payload.get('grouped_by_show')})")
+    reps: Dict[str, Dict] = {}
+    names, sources = None, set()
+    for path in args.reps:
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        overlap = reps.keys() & payload["reps"].keys()
+        if overlap:
+            raise ValueError(
+                f"{path} repeats {len(overlap)} utterances already loaded "
+                f"(e.g. {sorted(overlap)[:3]}) — the shards must not overlap."
+            )
+        reps.update(payload["reps"])
+        names = payload["label_names"]
+        sources.add(payload["checkpoint"])
+    if len(sources) > 1:
+        raise ValueError(f"caches come from different checkpoints: {sorted(sources)}")
+    print(f"{len(reps)} utterances from {sources.pop()}  "
+          f"({len(args.reps)} cache file(s))")
 
     counts: Dict[str, int] = {}
     for e in reps.values():

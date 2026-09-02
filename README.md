@@ -235,6 +235,18 @@ python -m scripts.extract_msp_representations \
 python -m scripts.probe_msp_8class --reps data/cache/msp_reps_nomsp_seed1.pt
 ```
 
+Extraction runs at ~28 utterances/s, so the full 161 K takes ~1.6 h and writes
+~4.5 GB. It shards cleanly by `Split_Set` across GPUs — Train is the long pole
+at ~53 min — and `--reps` takes the pieces back as a list:
+
+```bash
+for s in Train Development Test1 Test2; do
+  CUDA_VISIBLE_DEVICES=$i nohup python -m scripts.extract_msp_representations \
+      ... --splits $s --out data/cache/msp_${s}.pt &
+done
+python -m scripts.probe_msp_8class --reps data/cache/msp_*.pt
+```
+
 Data comes from AdaLTM's `8class_DropTextNAN.csv` — MSP-PODCAST 1.12, 161,350
 utterances with the official `Split_Set`, the 8-class `EmoClass`, and ASR text,
 so no transcription step is needed. Label map, class weighting and the reported
