@@ -214,6 +214,53 @@ gradient reaching `proj_text` versus `proj_audio`. With an 8 B text encoder the
 co-attention can learn to lean on text and starve the audio branch; that ratio
 is the number to watch if audio Stage I collapses.
 
+## Cross-corpus: MSP-PODCAST 8-class probes
+
+How much of MSP-PODCAST's eight-way emotion structure is already linearly
+available in representations learned from IEMOCAP four-way? The trained model is
+frozen and a fresh 8-way linear layer is fitted at every depth of the pipeline.
+
+```bash
+# 1. run MSP through the frozen model, caching T1 / S1 / T2 / S2 / h  (~1 h, ~2.2 GB)
+python -m scripts.extract_msp_representations \
+    --checkpoint outputs/nomsp/seed_1/best/one_stage.pt \
+    --manifest   /home/ouo/AdaLTM/8class_DropTextNAN.csv \
+    --audio-dir  /home/ouo/dataset/MSP_Podcast/Audios \
+    --care-ckpt  /home/ouo/care_training/ckpts_faithful/best.pth \
+    --care-repo  /home/ouo/care_training/CARE/pretraining \
+    --extract-script /home/ouo/care_training/care-training/scripts/extract_iemocap_care_downstream_style.py \
+    --out data/cache/msp_reps_nomsp_seed1.pt
+
+# 2. fit the probes  (minutes)
+python -m scripts.probe_msp_8class --reps data/cache/msp_reps_nomsp_seed1.pt
+```
+
+Data comes from AdaLTM's `8class_DropTextNAN.csv` — MSP-PODCAST 1.12, 161,350
+utterances with the official `Split_Set`, the 8-class `EmoClass`, and ASR text,
+so no transcription step is needed. Label map, class weighting and the reported
+metrics follow AdaLTM (`utils/data/podcast.py`, `tools/eval_pretrained_ser.py`):
+UAR, macro precision, macro-F1 with bootstrap CIs on Test1 and Test2. Chance is
+12.5 % UAR; AdaLTM quotes 35.56 % macro-F1 for vox-profile's fine-tuned
+WavLM-large, which is the scale these numbers live on — **not** the 0.84 of
+IEMOCAP four-way.
+
+Two mismatches, both handled explicitly:
+
+* **MSP has no dialogues.** Utterances are grouped into pseudo-conversations by
+  podcast show (`MSP-PODCAST_<show>_<segment>`, in segment order): 4,970 shows,
+  median 15 segments, the same order of magnitude as IEMOCAP's ~35. `--no-group`
+  makes every utterance a length-1 conversation instead, which turns Stage II/III
+  into near-identity — the honest ablation for what the conversation blocks add.
+* **Class weighting is not optional.** Neutral is 34 % of Train against Fear's
+  1.3 %; without the effective-number weights a probe predicts Neutral and
+  reports near-zero macro-F1.
+
+**Disclose this in any writeup:** CARE was self-supervised on MSP-PODCAST v1.11,
+so part of this test set was seen (unlabelled) during its pre-training. The audio
+branch is therefore not a clean cross-corpus transfer. The text branch is clean
+when probing a `lambda_aux = 0` checkpoint, which is why `nomsp` is the arm to
+use here.
+
 ## Protocol
 
 Paper split (Sec. IV-A): sessions 2–4 train, session 1 val, session 5 test;
