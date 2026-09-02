@@ -95,17 +95,29 @@ def read_wav(path: Path, target_sr: int = 16000) -> np.ndarray:
 
 
 def build_conversations(df: pd.DataFrame, group_by_show: bool, max_len: int) -> List[Dict]:
-    """Pseudo-conversations, in segment order within each podcast show."""
+    """Pseudo-conversations, in segment order within each (podcast show, split).
+
+    Grouping is by show AND split, never across splits. 1,479 of MSP's 4,970
+    shows span more than one Split_Set, covering 77,188 utterances — grouping on
+    the show alone would put Train and Test1 utterances in one conversation, and
+    Stage II/III contextualise across the conversation, so a test utterance's
+    T2/S2/h would be computed partly from training utterances. No label leaks
+    (the model is frozen here), but the representation would not be computable
+    from test data alone, which is not an evaluation anyone can deploy.
+
+    It also makes sharded and single-pass extraction produce identical output,
+    so splitting the job across GPUs is purely a speed decision.
+    """
     if not group_by_show:
         return [{"utts": [r.FileName], "texts": [r.text], "labels": [LABEL_MAP[r.EmoClass]],
                  "splits": [r.Split_Set]} for r in df.itertuples()]
 
     parsed = df["FileName"].str.extract(_SHOW_RE)
     df = df.assign(_show=parsed[0], _seg=parsed[1].astype(int))
-    df = df.sort_values(["_show", "_seg"])
+    df = df.sort_values(["_show", "Split_Set", "_seg"])
 
     convs: List[Dict] = []
-    for _, g in df.groupby("_show", sort=False):
+    for _, g in df.groupby(["_show", "Split_Set"], sort=False):
         rows = list(g.itertuples())
         # A show can run to 1020 segments; chunk so one forward stays bounded.
         for i in range(0, len(rows), max_len):
