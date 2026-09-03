@@ -342,6 +342,42 @@ Test2 sits 8–9 pp lower throughout, which is class balance rather than model
 quality: Neutral is 58 % of Test2 against 34 % of Test1, and macro metrics are
 sensitive to that. Compare each test set against chance, not against each other.
 
+### Task-vector comparison: does joint training improve the encoder itself?
+
+A LoRA adapter *is* a task vector, so the one-stage claim — that the fusion
+objective reshapes the utterance encoder — can be tested directly by probing T1
+alone from two adapters that share a subspace (both r=16, α=32, q/v):
+
+* `τ_joint` — this repo's `nomsp` seed 1, six losses, fusion gradient flowing back
+* `τ_stage1` — `merits-l-llama`'s staged Text Stage I, utterance-level CE only
+
+| | Test1 UAR | Test1 MaF1 | Test1 WF1 | Test2 UAR | Test2 MaF1 | Test2 WF1 |
+|---|---:|---:|---:|---:|---:|---:|
+| `τ_stage1` | **29.09** | 24.13 | 37.57 | 21.77 | **17.54** | **37.13** |
+| `τ_joint` | 28.74 | **24.76** | **38.81** | **22.65** | 17.25 | 34.17 |
+
+Six comparisons, three each, with the sign flipping between metrics and between
+test sets. **Indistinguishable.** The smoke test shows the fusion gradient
+reaches the adapter (‖g‖ ≈ 2.3e-01); this shows it leaves no transferable trace
+in the encoder.
+
+**One limitation decides how far this generalises.** A unimodal linear probe
+measures how much emotion content T1 carries *on its own*. The mechanism the
+fusion objective is supposed to exercise is making T1 **complementary to S1**,
+and no text-only probe can see complementarity. So the honest claim is: no
+evidence that joint training improves the encoder's standalone emotion content
+cross-corpus — and this experiment cannot rule out that it improves cross-modal
+complementarity.
+
+Two uncontrolled factors: the two adapters saw different amounts of training
+(staged Stage I ran 10 epochs over 4.3 K utterances, the joint run ~11 epochs of
+dialogue batches), and each regime is represented by a single adapter — the
+bootstrap CIs cover test-set sampling, not adapter seed variance.
+
+The follow-up that *would* measure complementarity: probe `t1‖s1` for both
+regimes, pairing each text adapter with the audio head trained alongside it
+(`merits-l-inference` released the staged `care_downstream_stage1/model.pt`).
+
 **Disclose this in any writeup:** CARE was self-supervised on MSP-PODCAST v1.11,
 so part of this test set was seen (unlabelled) during its pre-training. The audio
 branch is therefore not a clean cross-corpus transfer. The text branch is clean
