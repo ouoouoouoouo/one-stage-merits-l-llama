@@ -160,7 +160,7 @@ def main() -> int:
     set_seed(args.seed)
     device = torch.device(args.device)
     reps: Dict[str, Dict] = {}
-    names, sources = None, set()
+    names, sources, limits = None, set(), set()
     for path in args.reps:
         payload = torch.load(path, map_location="cpu", weights_only=False)
         overlap = reps.keys() & payload["reps"].keys()
@@ -172,6 +172,8 @@ def main() -> int:
         reps.update(payload["reps"])
         names = payload["label_names"]
         sources.add(payload["checkpoint"])
+        if payload.get("limit"):
+            limits.add(payload["limit"])
     if len(sources) > 1:
         raise ValueError(f"caches come from different checkpoints: {sorted(sources)}")
     print(f"{len(reps)} utterances from {sources.pop()}  "
@@ -181,6 +183,18 @@ def main() -> int:
     for e in reps.values():
         counts[e["split"]] = counts.get(e["split"], 0) + 1
     print("splits: " + "  ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+
+    # A --limit cache probes fine and prints a table that looks like a result.
+    # MSP's full splits are 89K / 25K / 35K / 11K, so anything in the hundreds is
+    # a debug run.
+    if limits:
+        print(f"\n*** WARNING: extracted with --limit {sorted(limits)} — "
+              f"this is a debug cache, not a result ***")
+    small = {k: v for k, v in counts.items() if v < 1000}
+    if small:
+        print(f"\n*** WARNING: splits far below MSP's full sizes "
+              f"(Train 89,752 / Development 25,232 / Test1 34,917 / Test2 11,449): "
+              f"{small} — was extraction interrupted or limited? ***")
 
     rng = np.random.default_rng(args.seed)
     metrics = [("UAR", lambda t, p: recall_score(t, p, average="macro", zero_division=0)),

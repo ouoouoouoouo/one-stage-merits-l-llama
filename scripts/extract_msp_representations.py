@@ -298,8 +298,13 @@ def main() -> int:
             }
         n_ok += len(keep)
 
-    print(f"\nextracted {n_ok} utterances | {n_missing_audio} missing audio "
-          f"(v1.12 manifest against a v1.11 audio directory) | {n_failed} failed")
+    tail = ("" if only_t1 else
+            f" | {n_missing_audio} missing audio "
+            f"(v1.12 manifest against a v1.11 audio directory) | {n_failed} failed")
+    print(f"\nextracted {n_ok} utterances{tail}")
+    if args.limit:
+        print(f"*** --limit {args.limit} was set: this is a debug cache, "
+              f"not a result ***")
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
@@ -313,6 +318,8 @@ def main() -> int:
         "only_t1": only_t1,
         "grouped_by_show": not args.no_group,
         "max_conv_len": args.max_conv_len,
+        # Recorded so the probe can refuse to report a debug cache as a result.
+        "limit": args.limit or None,
     }, out_path)
     print(f"saved {out_path}  ({out_path.stat().st_size / 1024**3:.2f} GiB)")
     return 0
