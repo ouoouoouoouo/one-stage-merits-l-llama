@@ -281,7 +281,41 @@ Two mismatches, both handled explicitly:
 | **`t2‖s2`** | 2304 | **33.06 ± 0.85** | 28.23 ± 0.46 |
 | `h` Stage III fused | 256 | 31.73 ± 0.67 | 28.10 ± 0.45 |
 | chance | | 12.50 | |
-| AdaLTM's reference: fine-tuned WavLM-large | | | 35.56 |
+
+For scale, AdaLTM's Table 1 Part 2 — WavLM-large, speech only, **trained on MSP
+Train's 89,752 8-class labels**:
+
+| AdaLTM setup | UAR | MaF1 |
+|---|---:|---:|
+| 1 — baseline, frozen backbone + trained head | 37.05 ± 0.67 | 34.46 |
+| 2 — ASR-only task vector | 37.57 ± 0.67 | 33.56 |
+| 3 — SER-only task vector | 39.09 ± 0.60 | 35.41 |
+| 4 — dual-vector (their proposal) | 38.94 ± 0.61 | 35.20 |
+
+**These are not comparable to the table above and should not be read as a
+ranking of the two approaches.** Four reasons, any one of which covers the gap:
+
+1. *Transfer versus in-domain.* Every AdaLTM setup trains on 89 K MSP 8-class
+   labels. This model has never seen an MSP emotion label — it was trained on
+   IEMOCAP 4-way, frozen, and given one linear layer.
+2. *What is being probed.* AdaLTM aggregates all 25 WavLM-large layers into its
+   head. `s1` here is CARE features already squeezed through a 2304→768→256
+   projection **fitted for four classes**. The information is discarded before
+   the probe ever sees it; that is a property of the probing point, not of the
+   fusion method.
+3. *Possibly different test sets.* Their eval script defaults to
+   `--splits test1 test2` and reports the pooled result; the table above is
+   Test1 alone, and Test2 is 58 % Neutral.
+4. *Different tasks.* MERITS-L is conversational multimodal ERC; AdaLTM is
+   speech-only SER with weight-space model merging.
+
+Worth noting for calibration: AdaLTM's own README records that setup 4 versus
+setup 3 is 38.94 against 39.09 with ±0.6 CIs — their proposed dual-vector does
+not beat the simpler SER-only vector. That paper's contribution is the merging
+mechanism, not the accuracy.
+
+Answering "is feature fusion worse than task vectors?" needs one-stage MERITS-L
+actually trained on MSP 8-class, same splits, same metrics.
 
 **Transfer is substantial.** The best probe is 2.6× chance, and its macro-F1
 reaches ~80 % of a WavLM-large *fine-tuned on MSP 8-class* — from a single
