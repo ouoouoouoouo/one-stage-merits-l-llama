@@ -240,11 +240,14 @@ Extraction runs at ~28 utterances/s, so the full 161 K takes ~1.6 h and writes
 at ~53 min — and `--reps` takes the pieces back as a list:
 
 ```bash
-for s in Train Development Test1 Test2; do
+# Shards go in their own directory: a glob over data/cache/ will otherwise pick
+# up any earlier --limit smoke-test cache, which the probe refuses (it checks
+# for repeated utterances) but only after the load.
+i=0; for s in Train Test1 Development Test2; do
   CUDA_VISIBLE_DEVICES=$i nohup python -m scripts.extract_msp_representations \
-      ... --splits $s --out data/cache/msp_${s}.pt &
-done
-python -m scripts.probe_msp_8class --reps data/cache/msp_*.pt
+      ... --splits $s --out data/cache/msp8/${s}.pt &
+  i=$((i+1)); done
+python -m scripts.probe_msp_8class --reps data/cache/msp8/*.pt
 ```
 
 Data comes from AdaLTM's `8class_DropTextNAN.csv` — MSP-PODCAST 1.12, 161,350
