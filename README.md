@@ -270,6 +270,44 @@ Two mismatches, both handled explicitly:
   1.3 %; without the effective-number weights a probe predicts Neutral and
   reports near-zero macro-F1.
 
+### Result (`nomsp` seed 1, Test1, n = 34,778)
+
+| probe | dim | UAR | Macro-F1 |
+|---|---:|---:|---:|
+| `t1` Llama utterance | 4096 | 28.74 ± 0.71 | 24.76 ± 0.44 |
+| `s1` CARE Stage I | 256 | 31.57 ± 0.71 | **28.58 ± 0.50** |
+| `t2` text Stage II | 2048 | 31.97 ± 0.85 | 25.71 ± 0.42 |
+| `s2` audio Stage II | 256 | 31.30 ± 0.77 | 27.17 ± 0.43 |
+| **`t2‖s2`** | 2304 | **33.06 ± 0.85** | 28.23 ± 0.46 |
+| `h` Stage III fused | 256 | 31.73 ± 0.67 | 28.10 ± 0.45 |
+| chance | | 12.50 | |
+| AdaLTM's reference: fine-tuned WavLM-large | | | 35.56 |
+
+**Transfer is substantial.** The best probe is 2.6× chance, and its macro-F1
+reaches ~80 % of a WavLM-large *fine-tuned on MSP 8-class* — from a single
+linear layer on frozen features learned on a different corpus with a different
+label space.
+
+**The modality ranking inverts.** Audio beats text here (`s1` 28.58 against `t1`
+24.76), the opposite of IEMOCAP, where the text branch dominates (Stage II 0.80
+against 0.64). It is not capacity: `s1` is 256-d and `t1` is 4096-d, and a
+linear probe on 89 K training samples is helped, not hurt, by width.
+
+**But do not read that as "audio transfers better".** CARE was self-supervised
+on MSP-PODCAST, so the audio branch has home-field advantage on this corpus's
+acoustics and the text branch has none. Separating "CARE knows MSP audio" from
+"the IEMOCAP-trained audio head transfers" needs a random-initialised control —
+same architecture, same frozen Llama base, every trained weight reset. If the
+random `s1` probes near 28.58, the advantage is entirely CARE's pre-training.
+
+**Stage III compresses away usable information.** `h` (256-d, 31.73 UAR) does
+not beat its own input `t2‖s2` (2304-d, 33.06). That 2304→256 projection was
+fitted for IEMOCAP 4-way, and under a different task it is lossy.
+
+Test2 sits 8–9 pp lower throughout, which is class balance rather than model
+quality: Neutral is 58 % of Test2 against 34 % of Test1, and macro metrics are
+sensitive to that. Compare each test set against chance, not against each other.
+
 **Disclose this in any writeup:** CARE was self-supervised on MSP-PODCAST v1.11,
 so part of this test set was seen (unlabelled) during its pre-training. The audio
 branch is therefore not a clean cross-corpus transfer. The text branch is clean
