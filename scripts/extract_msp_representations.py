@@ -136,10 +136,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True, help="outputs/<arm>/seed_N/best/one_stage.pt")
     ap.add_argument("--manifest", required=True, help="AdaLTM 8class_DropTextNAN.csv")
-    ap.add_argument("--audio-dir", required=True)
-    ap.add_argument("--care-ckpt", required=True)
-    ap.add_argument("--care-repo", required=True)
-    ap.add_argument("--extract-script", required=True)
+    # Only needed for the audio path; --only-t1 / --lora-adapter skip it entirely.
+    ap.add_argument("--audio-dir", default=None)
+    ap.add_argument("--care-ckpt", default=None)
+    ap.add_argument("--care-repo", default=None)
+    ap.add_argument("--extract-script", default=None)
     ap.add_argument("--out", required=True)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--splits", nargs="*", default=None,
@@ -150,6 +151,15 @@ def main() -> int:
     ap.add_argument("--max-length", type=int, default=128)
     ap.add_argument("--no-group", action="store_true",
                     help="one utterance per conversation (Stage II/III become near-identity)")
+    ap.add_argument("--lora-adapter", default=None,
+                    help="peft adapter directory to swap in for the checkpoint's own "
+                         "LoRA weights, e.g. merits-l-llama's staged Stage I "
+                         "outputs/iemocap_text_llama_stage1/best. --checkpoint still "
+                         "supplies the architecture, so both runs are identical apart "
+                         "from the adapter. Implies --only-t1.")
+    ap.add_argument("--only-t1", action="store_true",
+                    help="extract just the Llama utterance embedding: skips the CARE "
+                         "encoder, the wav reads and Stage II/III entirely")
     ap.add_argument("--limit", type=int, default=0, help="debug: stop after N conversations")
     args = ap.parse_args()
 
@@ -168,6 +178,25 @@ def main() -> int:
     n_restored = len(ckpt["model_state_dict"])
     print(f"restored {n_restored} tensors; {len(missing)} left at their pretrained values "
           f"(the frozen Llama base)")
+
+    only_t1 = args.only_t1
+    if args.lora_adapter:
+        # Task-vector comparison: same architecture, same base, same LoRA
+        # subspace (r / alpha / target_modules must match), different adapter.
+        # Only T1 is meaningful afterwards — the checkpoint's audio head and
+        # Stage II/III belong to a different training run than this adapter.
+        base = model.text_stage1.base
+        if not hasattr(base, "load_adapter"):
+            raise RuntimeError("--lora-adapter needs a peft-wrapped base "
+                               "(model.text.use_lora must be true)")
+        base.load_adapter(args.lora_adapter, adapter_name="default")
+        for _, p in base.named_parameters():
+            if p.requires_grad:
+                p.data = p.data.float()
+        print(f"swapped in the LoRA adapter from {args.lora_adapter}; "
+              f"extracting T1 only")
+        only_t1 = True
+
     model.eval()
 
     from transformers import AutoTokenizer
@@ -176,7 +205,16 @@ def main() -> int:
         tok.pad_token = tok.eos_token
 
     # ---- CARE encoder, frozen ----
-    care = load_care_extractor(args.extract_script, args.care_ckpt, args.care_repo, args.device)
+    care = None
+    if not only_t1:
+        need = {"--audio-dir": args.audio_dir, "--care-ckpt": args.care_ckpt,
+                "--care-repo": args.care_repo, "--extract-script": args.extract_script}
+        absent = [k for k, v in need.items() if not v]
+        if absent:
+            raise SystemExit(f"the audio path needs {', '.join(absent)} "
+                             f"(or pass --only-t1 to skip it)")
+        care = load_care_extractor(args.extract_script, args.care_ckpt,
+                                   args.care_repo, args.device)
 
     # ---- manifest ----
     df = pd.read_csv(args.manifest)
@@ -190,27 +228,32 @@ def main() -> int:
     print(f"{len(df)} utterances -> {len(convs)} "
           f"{'pseudo-conversations' if not args.no_group else 'single-utterance items'}")
 
-    audio_dir = Path(args.audio_dir)
+    audio_dir = Path(args.audio_dir) if args.audio_dir else None
     out: Dict[str, Dict] = {}
     n_ok = n_missing_audio = n_failed = 0
 
     for conv in tqdm(convs, desc="extract"):
         # --- audio: CARE features for every utterance we can find on disk ---
-        keep, feats, pooled = [], [], []
-        for i, utt in enumerate(conv["utts"]):
-            wav_path = audio_dir / utt
-            if not wav_path.exists():
-                n_missing_audio += 1
-                continue
-            try:
-                f, p = care.extract(read_wav(wav_path))
-            except Exception as e:  # noqa: BLE001
-                print(f"\n[warn] {utt}: {e}")
-                n_failed += 1
-                continue
-            keep.append(i)
-            feats.append(f)
-            pooled.append(p)
+        if only_t1:
+            # No audio path at all: every utterance survives, and the wav reads
+            # (the slow part) are skipped.
+            keep, feats, pooled = list(range(len(conv["utts"]))), [], []
+        else:
+            keep, feats, pooled = [], [], []
+            for i, utt in enumerate(conv["utts"]):
+                wav_path = audio_dir / utt
+                if not wav_path.exists():
+                    n_missing_audio += 1
+                    continue
+                try:
+                    f, p = care.extract(read_wav(wav_path))
+                except Exception as e:  # noqa: BLE001
+                    print(f"\n[warn] {utt}: {e}")
+                    n_failed += 1
+                    continue
+                keep.append(i)
+                feats.append(f)
+                pooled.append(p)
         if not keep:
             continue
 
@@ -218,31 +261,33 @@ def main() -> int:
         enc = tok(texts, padding=True, truncation=True,
                   max_length=args.max_length, return_tensors="pt")
         K = len(keep)
-        batch = {
-            "input_ids": enc["input_ids"].unsqueeze(0).to(device),
-            "attention_mask": enc["attention_mask"].unsqueeze(0).to(device),
-            "care_features": torch.stack(feats).unsqueeze(0).to(device),
-            "care_pooled": torch.stack(pooled).unsqueeze(0).to(device),
-            "mask": torch.ones(1, K, dtype=torch.bool, device=device),
-        }
+        mask = torch.ones(1, K, dtype=torch.bool, device=device)
 
         # Reach inside the model rather than calling forward_conversation, which
         # would need labels and would not hand back the intermediate tensors.
-        ids = batch["input_ids"].reshape(K, -1)
-        att = batch["attention_mask"].reshape(K, -1)
+        ids = enc["input_ids"].to(device)
+        att = enc["attention_mask"].to(device)
         if args.text_chunk and K > args.text_chunk:
             t1 = torch.cat([model.text_stage1.get_features(ids[i:i + args.text_chunk],
                                                            att[i:i + args.text_chunk])
                             for i in range(0, K, args.text_chunk)], dim=0)
         else:
             t1 = model.text_stage1.get_features(ids, att)
+
+        if only_t1:
+            for j, i in enumerate(keep):
+                out[conv["utts"][i]] = {
+                    "t1": t1[j].half().cpu(),
+                    "label": conv["labels"][i], "split": conv["splits"][i],
+                }
+            n_ok += len(keep)
+            continue
+
         s1 = model.audio_stage1.get_features(
-            batch["care_features"].reshape(K, *batch["care_features"].shape[2:]),
-            batch["care_pooled"].reshape(K, -1),
-        )
-        t2 = model.text_stage2.encode(t1.unsqueeze(0), batch["mask"])[0]
-        s2 = model.audio_stage2.encode(s1.unsqueeze(0), batch["mask"])[0]
-        h = model.fusion(t2.unsqueeze(0), s2.unsqueeze(0), batch["mask"])["fused_hidden"][0]
+            torch.stack(feats).to(device), torch.stack(pooled).to(device))
+        t2 = model.text_stage2.encode(t1.unsqueeze(0), mask)[0]
+        s2 = model.audio_stage2.encode(s1.unsqueeze(0), mask)[0]
+        h = model.fusion(t2.unsqueeze(0), s2.unsqueeze(0), mask)["fused_hidden"][0]
 
         for j, i in enumerate(keep):
             out[conv["utts"][i]] = {
@@ -260,7 +305,12 @@ def main() -> int:
     torch.save({
         "reps": out,
         "label_names": LABEL_NAMES,
-        "checkpoint": str(args.checkpoint),
+        # The adapter is what identifies a task-vector run; without one the
+        # checkpoint identifies it.
+        "checkpoint": str(args.lora_adapter or args.checkpoint),
+        "architecture_from": str(args.checkpoint),
+        "lora_adapter": str(args.lora_adapter) if args.lora_adapter else None,
+        "only_t1": only_t1,
         "grouped_by_show": not args.no_group,
         "max_conv_len": args.max_conv_len,
     }, out_path)
