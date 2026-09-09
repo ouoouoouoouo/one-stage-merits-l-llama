@@ -1,0 +1,29 @@
+% Standalone version for checking the table renders before pasting the fragment
+% into the thesis. Same convention as merits-l-text's *_standalone.tex files.
+%
+%   pdflatex msp_lambda_table_standalone.tex
+
+\documentclass[border=10pt]{standalone}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bm}
+\begin{document}
+\begin{tabular}{llcr@{\;$\pm$\;}lcr}
+\toprule
+\textbf{Arm} & \textbf{Schedule} & $\boldsymbol{\lambda_{\text{aux}}}$ &
+\multicolumn{2}{c}{\textbf{Fusion mean}} & \textbf{Fusion best} &
+\textbf{Mean $-$ $\lambda{=}0$ (pp)} \\
+\midrule
+Baseline  & cosine $\rightarrow 0.05$ & 1.0 & 0.8288 & 0.0074 & 0.8362 & $-1.32$ \\
+Lam-0.1   & cosine $\rightarrow 0.05$ & 0.1 & 0.8272 & 0.0137 & 0.8381 & $-1.48$ \\
+Lam-0.3   & cosine $\rightarrow 0.05$ & 0.3 & 0.8380 & 0.0090 & 0.8472 & $-0.40$ \\
+Phase-15  & phase, first 15\%         & 1.0 & \textbf{0.8394} & \textbf{0.0076} & \textbf{0.8513} & $\mathbf{-0.26}$~$\star$ \\
+Phase-30  & phase, first 30\%         & 1.0 & 0.8273 & 0.0143 & 0.8413 & $-1.47$ \\
+\midrule
+\multicolumn{7}{l}{\textit{Reference}} \\
+No MSP loss & ---                     & 0.0 & 0.8420 & 0.0114 & 0.8588 & --- \\
+Staged (\texttt{merits-l-llama}) & --- & --- & 0.8567 & 0.0139 & 0.8746 & $+1.47$ \\
+\bottomrule
+\end{tabular}
+\end{document}
