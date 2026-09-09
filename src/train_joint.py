@@ -308,9 +308,22 @@ def train(cfg: AttrDict) -> None:
         runlog.info(f"  {split:<5}: {len(ld.dataset)} dialogues / "
                     f"{ld.dataset.num_utterances()} utterances "
                     f"(longest conversation = {ld.dataset.max_conversation_length()})")
+    # Spell out the schedule's own parameter: printing aux_final_scale next to
+    # `phase_epoch`, which ignores it, made parallel arms indistinguishable in
+    # their logs.
+    sched = str(cfg.loss.aux_schedule).lower()
+    if sched == "phase_epoch":
+        sched_desc = f"phase_epoch, off after epoch {cfg.loss.get('aux_phase_epochs', 15)}"
+    elif sched == "phase":
+        frac = float(cfg.loss.get("aux_phase_frac", 0.3))
+        sched_desc = (f"phase, off after {frac:.0%} of the {int(cfg.train.epochs)}-epoch "
+                      f"budget = epoch {int(frac * int(cfg.train.epochs))}")
+    elif sched in ("none", "constant"):
+        sched_desc = "constant"
+    else:
+        sched_desc = f"{sched} -> x{cfg.loss.aux_final_scale}"
     runlog.info(f"Lambdas      : " + "  ".join(f"{k}={v}" for k, v in lambdas.items()) +
-                f"  aux={cfg.loss.lambda_aux} ({cfg.loss.aux_schedule} -> "
-                f"x{cfg.loss.aux_final_scale})")
+                f"  aux={cfg.loss.lambda_aux} ({sched_desc})")
     runlog.info(f"MSP aux      : {'on, every ' + str(cfg.aux.every) + ' micro-steps' if use_aux else 'OFF'}")
     runlog.info(f"Batch        : {cfg.train.batch_size} dialogues x {grad_accum} accum")
     runlog.info(f"LR           : encoder={cfg.train.encoder_lr}  "
