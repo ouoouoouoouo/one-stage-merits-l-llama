@@ -18,11 +18,11 @@ $\lambda_{\text{aux}}$ and its schedule.}
 \multicolumn{2}{c}{\textbf{Fusion mean}} & \textbf{Fusion best} &
 \textbf{Mean $-$ $\lambda{=}0$ (pp)} \\
 \midrule
-Baseline  & cosine $\rightarrow 0.05$ & 1.0 & 0.8288 & 0.0074 & 0.8362 & $-1.32$ \\
-Lam-0.1   & cosine $\rightarrow 0.05$ & 0.1 & 0.8272 & 0.0137 & 0.8381 & $-1.48$ \\
-Lam-0.3   & cosine $\rightarrow 0.05$ & 0.3 & 0.8380 & 0.0090 & 0.8472 & $-0.40$ \\
-Phase-15  & phase, first 15\%         & 1.0 & \textbf{0.8394} & \textbf{0.0076} & \textbf{0.8513} & $\mathbf{-0.26}$~$\star$ \\
-Phase-30  & phase, first 30\%         & 1.0 & 0.8273 & 0.0143 & 0.8413 & $-1.47$ \\
+Baseline  & constant$^{\dagger}$      & 1.0 & 0.8288 & 0.0074 & 0.8362 & $-1.32$ \\
+Lam-0.1   & constant$^{\dagger}$      & 0.1 & 0.8272 & 0.0137 & 0.8381 & $-1.48$ \\
+Lam-0.3   & constant$^{\dagger}$      & 0.3 & 0.8380 & 0.0090 & 0.8472 & $-0.40$ \\
+Phase-15  & off after epoch 15        & 1.0 & \textbf{0.8394} & \textbf{0.0076} & \textbf{0.8513} & $\mathbf{-0.26}$~$\star$ \\
+Phase-30  & constant$^{\ddagger}$     & 1.0 & 0.8273 & 0.0143 & 0.8413 & $-1.47$ \\
 \midrule
 \multicolumn{7}{l}{\textit{Reference}} \\
 No MSP loss & ---                     & 0.0 & 0.8420 & 0.0114 & 0.8588 & --- \\
@@ -32,6 +32,14 @@ Staged (\texttt{merits-l-llama}) & --- & --- & 0.8567 & 0.0139 & 0.8746 & $+1.47
 
 \vspace{2pt}
 \footnotesize
+$\dagger$ Configured as a cosine decay to $0.05$, but the schedule is defined
+over the 100-epoch budget while early stopping fires near epoch~34, so within
+the training window the factor only falls from $1.00$ to $0.78$. These arms are
+therefore effectively constant-weight.
+$\ddagger$ Configured to switch off at 30\% of the budget, i.e.\ epoch~30, but
+the best checkpoint was selected at epochs 10--25, so the cutoff never affected
+the reported model; this arm is also effectively constant-weight. Only Phase-15
+exercises the schedule axis.
 $\star$ Best among the arms that retain $\mathcal{L}_{\text{MSP}}$.
 \textbf{No setting of $\lambda_{\text{aux}}>0$ improves on
 $\lambda_{\text{aux}}=0$}: Phase-15 and Lam-0.3 are statistically
