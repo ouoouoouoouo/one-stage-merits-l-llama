@@ -84,14 +84,24 @@ loss:
   # lambda_aux = 0 is one point on this sweep, not a separate experiment — that
   # framing keeps the comparison fair once the MSP arm gets tuned.
   lambda_aux: 1.0
-  # none | cosine | linear | phase
-  #   phase = full weight for the first `aux_phase_frac` of the run, then
-  #   exactly zero. The literal translation of the paper's "pre-train for 10
-  #   epochs, then stop", and the schedule to use when the auxiliary task helps
-  #   early and interferes late.
+  # none | cosine | linear | phase | phase_epoch
+  #
+  # phase_epoch is the one to use: full weight for the first `aux_phase_epochs`
+  # epochs, then exactly zero — the literal form of the paper's "pre-train for
+  # 10 epochs, then stop".
+  #
+  # `phase` measures progress against the STEP BUDGET (epochs x steps/epoch),
+  # not against where early stopping fires. With a 100-epoch budget and stopping
+  # near epoch 34, aux_phase_frac=0.3 cut at epoch 30 — after the best
+  # checkpoint had already been selected, so that arm was effectively a constant
+  # weight. Kept only to reproduce the arms already run.
+  #
+  # The same gap distorts cosine: truncated at epoch 34 of a 100-epoch budget it
+  # never falls below ~0.68, so it too is closer to constant than it sounds.
   aux_schedule: cosine
   aux_final_scale: 0.05       # cosine / linear only
-  aux_phase_frac: 0.3         # phase only
+  aux_phase_frac: 0.3         # phase only (fraction of the step budget)
+  aux_phase_epochs: 15        # phase_epoch only (epochs, and they mean epochs)
 
 train:
   # Same schedule as the RoBERTa version so the two are directly comparable:

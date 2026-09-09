@@ -79,7 +79,8 @@ def trainable_state_dict(model) -> Dict[str, torch.Tensor]:
 
 
 def aux_scale(step: int, total_steps: int, schedule: str, final_scale: float,
-              phase_frac: float = 0.3) -> float:
+              phase_frac: float = 0.3, epoch: int = 0,
+              phase_epochs: int = 15) -> float:
     """Decay factor on lambda_aux.
 
     The paper pre-trains on MSP-PODCAST for 10 epochs and then never looks at it
@@ -91,15 +92,26 @@ def aux_scale(step: int, total_steps: int, schedule: str, final_scale: float,
       none/constant — full weight throughout
       cosine        — slow at first, fast in the middle, slow at the end
       linear        — uniform retreat
-      phase         — full weight for the first `phase_frac` of the run, then
-                      exactly zero. The literal translation of "pre-train, then
-                      stop", and the one to reach for when the auxiliary task
-                      helps early and interferes late — which is what the Llama
-                      arms look like (msp 0.8288 vs nomsp 0.8420).
+      phase         — full weight for the first `phase_frac` of the STEP BUDGET,
+                      then zero. **Measures progress against `epochs`, not
+                      against where early stopping actually fires**, and with a
+                      100-epoch budget stopping near epoch 34 that made
+                      `phase_frac=0.3` cut at epoch 30, i.e. after the best
+                      checkpoint had already been chosen. Kept only so the arms
+                      already run stay reproducible.
+      phase_epoch   — full weight for the first `phase_epochs` epochs, then
+                      exactly zero. Use this: the cutoff lands where it says it
+                      does regardless of when the run ends.
+
+    Note the same budget/reality gap distorts `cosine` and `linear`: over a
+    100-epoch budget truncated at epoch 34, cosine never falls below ~0.68, so
+    it is much closer to a constant weight than its name suggests.
     """
     schedule = str(schedule).lower()
     if schedule in ("none", "constant"):
         return 1.0
+    if schedule == "phase_epoch":
+        return 1.0 if epoch < phase_epochs else 0.0
     p = min(max(step / max(1, total_steps), 0.0), 1.0)
     if schedule == "phase":
         return 1.0 if p < phase_frac else 0.0
@@ -349,20 +361,25 @@ def train(cfg: AttrDict) -> None:
                 for k in STAGE_KEYS:
                     running[k].append(float(out[f"loss_{k}"].item()))
 
-                aux_value = 0.0
                 if use_aux and micro_step % aux_every == 0:
-                    aux_batch = next(aux_stream)
-                    aux_out = model.forward_aux_text(
-                        aux_batch["input_ids"].to(device, non_blocking=True),
-                        aux_batch["attention_mask"].to(device, non_blocking=True),
-                        aux_batch["labels"].to(device, non_blocking=True),
-                    )
-                    scale = aux_scale(global_step, total_steps,
-                                      cfg.loss.aux_schedule, float(cfg.loss.aux_final_scale),
-                                      float(cfg.loss.get("aux_phase_frac", 0.3)))
-                    total = total + float(cfg.loss.lambda_aux) * scale * aux_out["loss"]
-                    aux_value = float(aux_out["loss"].item())
-                    running["aux"].append(aux_value)
+                    scale = aux_scale(
+                        global_step, total_steps, cfg.loss.aux_schedule,
+                        float(cfg.loss.aux_final_scale),
+                        float(cfg.loss.get("aux_phase_frac", 0.3)),
+                        epoch, int(cfg.loss.get("aux_phase_epochs", 15)))
+                    # Past a phase cutoff the term contributes exactly zero, so
+                    # running the 8B forward for it only burns time and consumes
+                    # RNG. Skipping makes the post-cutoff run genuinely identical
+                    # to one with no auxiliary loss, not merely equal in gradient.
+                    if scale > 0.0:
+                        aux_batch = next(aux_stream)
+                        aux_out = model.forward_aux_text(
+                            aux_batch["input_ids"].to(device, non_blocking=True),
+                            aux_batch["attention_mask"].to(device, non_blocking=True),
+                            aux_batch["labels"].to(device, non_blocking=True),
+                        )
+                        total = total + float(cfg.loss.lambda_aux) * scale * aux_out["loss"]
+                        running["aux"].append(float(aux_out["loss"].item()))
 
             running["total"].append(float(total.item()))
             scaler.scale(total / grad_accum).backward()
@@ -387,11 +404,15 @@ def train(cfg: AttrDict) -> None:
                            for k in STAGE_KEYS}
                 scalars["loss_total"] = float(np.mean(running["total"][-log_every * grad_accum:]))
                 if running["aux"]:
-                    scalars["loss_aux"] = float(np.mean(running["aux"][-log_every:]))
+                    scalars["loss_aux"] = float(np.mean(running["aux"]))
+                    # Cleared each time so a phase cutoff shows as the series
+                    # ending, rather than the last pre-cutoff value persisting.
+                    running["aux"].clear()
                 scalars["lambda_aux_scale"] = aux_scale(
                     global_step, total_steps, cfg.loss.aux_schedule,
                     float(cfg.loss.aux_final_scale),
-                    float(cfg.loss.get("aux_phase_frac", 0.3))) if use_aux else 0.0
+                    float(cfg.loss.get("aux_phase_frac", 0.3)),
+                    epoch, int(cfg.loss.get("aux_phase_epochs", 15))) if use_aux else 0.0
                 for gname, lr in zip(group_names, scheduler.get_last_lr()):
                     if not gname.endswith("_no_decay"):
                         scalars[f"lr_{gname}"] = lr
